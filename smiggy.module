@@ -39,22 +39,32 @@ function smiggy_block_info() {
 
 /*rt get some info
 */
-function smiggy_contents(){
+function smiggy_contents($display){
   //Get today's date.
   $today = getdate();
   //Calculate the date a week ago.
   $stasmiggy_time = mktime(0, 0, 0,$today['mon'],($today['mday'] - 7), $today['year']);
   //Get all posts from one week ago to the present.
   $end_time = time();
+
+ //NEW LINE 
+  $max_num = variable_get('smiggy_max', 3);
+
    //Use Database API to retrieve current posts.
   $query = db_select('node', 'n')
     ->fields('n', array('nid', 'title', 'created'))
     ->condition('status', 1) //Published.
     ->condition('created', array($stasmiggy_time, $end_time), 'BETWEEN')
     //rt I changed this from create to title
-    ->orderBy('title', 'ASC') //Most recent first.
-    ->execute(); 
-  return $query;  
+    ->orderBy('title', 'ASC'); //Most recent first.
+
+   if ($display == 'block'){ 
+  // Restrict the range if called with 'block' argument.
+    $query->range(0, $max_num);
+  } //Now proceeds to execute().
+  //If called by page, query proceeds directly to execute().
+
+  return $query->execute();
 }
 
 /*rt show the got info
@@ -71,7 +81,7 @@ function smiggy_block_view($delta = '') {
       $block['subject'] = t('Smiggy autocomplete add, I would rather expose the view');
       if (user_access('access content')) {
         // Use our custom function to retrieve data.
-        $result = smiggy_contents();
+        $result = smiggy_contents('block');
         // Array to contain items for the block to render.
         $items = array();
         // Iterate over the resultset and format as links.
@@ -93,4 +103,115 @@ function smiggy_block_view($delta = '') {
     return $block;
   }
   
+}
+
+//check for admin access to add menu.
+/**
+ * Implements hook_menu().
+ */
+function smiggy_menu() {
+  $items = array();
+
+  $items['admin/config/content/smiggy'] = array(
+    'title' => 'Smiggy thangs',
+    'description' => 'Configuration for Current posts module',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('smiggy_form'),
+    'access arguments' => array('access administration pages'),
+    'type' => MENU_NORMAL_ITEM,
+  );
+
+  $items['smiggy'] = array(
+        'title' => 'smiggy admin page',
+        'page callback' => '_smiggy_page',
+        'access arguments' => array('access smiggy content'),
+        'type' => MENU_NORMAL_ITEM, //Will appear in Navigation menu.
+      );
+
+  return $items;
+}
+//create an admin form.
+/**
+ * Page callback: Current posts settings
+ *
+ * @see smiggy_menu()
+ */
+function smiggy_form($form, &$form_state) {
+  $form['smiggy_max'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Maximum number of posts'),
+    '#default_value' => variable_get('smiggy_max', 3),
+    '#size' => 2,
+    '#maxlength' => 2,
+    '#description' => t('The maximum number of links to display in the block.'),
+    '#required' => TRUE,
+  );
+
+  return system_settings_form($form);
+}
+
+//validate config data is a number.
+/**
+ * Implements validation from the Form API.
+ * 
+ * @param $form
+ *   A structured array containing the elements and properties of the form.
+ * @param $form_state
+ *   An array that stores information about the form's current state 
+ *   during processing.
+ */
+function smiggy_form_validate($form, &$form_state){
+  $max_num = $form_state['values']['smiggy_max'];
+  if (!is_numeric($max_num)){
+    form_set_error('smiggy_max', t('You must enter a number for the maximum number of posts to display.'));
+  }
+  elseif ($max_num <= 0){
+    form_set_error('smiggy_max', t('Maximum number of posts to display must be positive.'));
+  }
+}
+
+//checks permissions to module.
+/**
+ * Implements hook_permission().
+ */
+function smiggy_permission() {
+  return array(
+    'access smiggy content' => array(
+      'title' => t('Access content for the Smiggy posts module'),
+    )
+  );
+}
+
+//create a smiggy page that contains all the smiggys
+
+/**
+ * Custom page callback function, declared in smiggy_menu().
+ */
+function _smiggy_page() {
+  $result = smiggy_contents('page');
+  //Array to contain items for the page to render.
+  $items = array();
+  //Iterate over the resultset and format as links.
+  foreach ($result as $node) {
+    $items[] = array(
+    'data' => l($node->title, 'node/' . $node->nid),
+    ); 
+  }
+  if (empty($items)) { //No content in the last week.
+    $page_array['smiggy_arguments'] = array(
+      //Title serves as page subtitle
+      '#title' => t('All posts from the last week'),
+      '#markup' => t('No posts available.'),
+    );
+    return $page_array;  
+  } 
+  else {
+    $page_array['smiggy_arguments'] = array(
+      '#title' => t('All posts from the last week'),
+      '#items' => $items,
+      //Theme hook with suggestion.  
+      '#theme' => 'item_list__smiggy',
+    );
+    return $page_array;
+  }
 }
